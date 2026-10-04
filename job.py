@@ -65,7 +65,7 @@ if F["agents"] and os.environ.get("GOOGLE_API_KEY"):
     from tradingagents.graph.trading_graph import TradingAgentsGraph
     from tradingagents.default_config import DEFAULT_CONFIG
     cfg = DEFAULT_CONFIG.copy()
-    cfg.update({"llm_provider": "google", "deep_think_llm": "gemini-2.5-flash", "quick_think_llm": "gemini-2.5-flash-lite",
+    cfg.update({"llm_provider": "google", "deep_think_llm": "gemini-3.5-flash", "quick_think_llm": "gemini-3.5-flash-lite",
                 "max_debate_rounds": 1, "max_risk_discuss_rounds": 1})
     for job in F["agents"]:
         try:
