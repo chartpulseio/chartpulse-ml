@@ -4,13 +4,22 @@ then pushes the results back. Secrets: CP_KEY (same as config.php ml_push_key), 
 import os, sys, json, time, datetime, traceback
 import numpy as np, requests
 
-URL = os.environ["CP_URL"]; H = {"X-CP-Key": os.environ["CP_KEY"], "User-Agent": "chartpulse-ml-job"}
+URL = os.environ["CP_URL"]
+def H0():
+    h = {"User-Agent": "chartpulse-ml-job"}
+    if len(os.environ.get("CP_KEY", "")) >= 20: h["X-CP-Key"] = os.environ["CP_KEY"]
+    u, t = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL"), os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+    if u and t:
+        r = requests.get(u + "&audience=chartpulse.io", headers={"Authorization": "bearer " + t}, timeout=30); r.raise_for_status()
+        h["X-GH-OIDC"] = r.json()["value"]
+    return h
+H = H0()
 feed = requests.get(URL, params={"r": "mlfeed"}, headers=H, timeout=60); feed.raise_for_status(); F = feed.json()
 out = {"forecasts": {}, "sentiment": {}, "agents": {}}
 print("feed:", len(F["symbols"]), "symbols,", len(F["headlines"]), "headlines,", len(F["agents"]), "agent jobs, forecast:", F["need_forecast"])
 
 def push():
-    r = requests.post(URL, params={"r": "mlpush"}, headers={**H, "Content-Type": "application/json"}, data=json.dumps(out), timeout=120)
+    r = requests.post(URL, params={"r": "mlpush"}, headers={**H0(), "Content-Type": "application/json"}, data=json.dumps(out), timeout=120)
     print("push:", r.status_code, r.text[:300])
 
 # ---- FinBERT ----
