@@ -1,0 +1,23 @@
+name: ChartPulse ML
+on:
+  schedule: [ { cron: "17 * * * *" } ]   # every hour
+  workflow_dispatch: {}
+concurrency: { group: ml, cancel-in-progress: false }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - name: Install
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+      - name: Run
+        env:
+          CP_URL: https://chartpulse.io/api.php
+          CP_KEY: ${{ secrets.CP_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: python job.py
