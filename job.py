@@ -16,7 +16,8 @@ def H0():
 H = H0()
 feed = requests.get(URL, params={"r": "mlfeed"}, headers=H, timeout=60); feed.raise_for_status(); F = feed.json()
 out = {"forecasts": {}, "sentiment": {}, "agents": {}}
-print("feed:", len(F["symbols"]), "symbols,", len(F["headlines"]), "headlines,", len(F["agents"]), "agent jobs, forecast:", F["need_forecast"])
+FULL = bool(F["need_forecast"]); FC = F["symbols"] if FULL else F.get("priority", [])
+print("feed:", len(F["symbols"]), "symbols,", len(F["headlines"]), "headlines,", len(F["agents"]), "agent jobs, full forecast:", FULL, "forecast now:", len(FC))
 
 def push():
     r = requests.post(URL, params={"r": "mlpush"}, headers={**H0(), "Content-Type": "application/json"}, data=json.dumps(out), timeout=120)
@@ -33,14 +34,14 @@ if F["headlines"]:
     except Exception: traceback.print_exc()
 
 # ---- TimesFM 2.5 (daily closes from Yahoo Finance, once a day) ----
-if F["need_forecast"]:
+if FC:
     try:
         import yfinance as yf, timesfm, torch
         torch.set_num_threads(os.cpu_count() or 2)
         m = timesfm.TimesFM_2p5_200M_torch.from_pretrained("google/timesfm-2.5-200m-pytorch")
         m.compile(timesfm.ForecastConfig(max_context=1024, max_horizon=64, normalize_inputs=True, use_continuous_quantile_head=True,
                   force_flip_invariance=True, infer_is_positive=True, fix_quantile_crossing=True))
-        syms = F["symbols"]; h = int(F.get("horizon", 10))
+        syms = FC; h = int(F.get("horizon", 10))
         for i in range(0, len(syms), 60):
             chunk = syms[i:i + 60]
             df = yf.download(chunk, period="5y", interval="1d", auto_adjust=False, progress=False, group_by="ticker", threads=True)
@@ -56,6 +57,7 @@ if F["need_forecast"]:
                                         "p75": float((q[k, j, 7] + q[k, j, 8]) / 2), "p90": float(q[k, j, 9])} for j in range(h)]
             print("forecasts", len(out["forecasts"]))
     except Exception: traceback.print_exc()
+out["full"] = FULL and len(out["forecasts"]) > 50
 push(); out = {"forecasts": {}, "sentiment": {}, "agents": {}}
 
 # ---- TradingAgents (queued symbols), pushed one by one ----
