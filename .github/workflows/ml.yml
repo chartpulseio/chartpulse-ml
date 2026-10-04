@@ -1,6 +1,6 @@
 name: ChartPulse ML
 on:
-  schedule: [ { cron: "17 * * * *" } ]   # every hour
+  schedule: [ { cron: "*/15 * * * *" } ]   # every 15 min
   workflow_dispatch: {}
 permissions: { id-token: write, contents: read }
 concurrency: { group: ml, cancel-in-progress: false }
@@ -12,6 +12,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
+      - uses: actions/cache@v4
+        with: { path: ~/.cache/huggingface, key: hf-models-v1 }
       - name: Install
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
