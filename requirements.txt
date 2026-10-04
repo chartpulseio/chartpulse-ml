@@ -1,0 +1,7 @@
+numpy<2.3
+pandas
+requests
+yfinance
+transformers>=4.44
+git+https://github.com/google-research/timesfm.git
+git+https://github.com/TauricResearch/TradingAgents.git
