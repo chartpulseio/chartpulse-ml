@@ -75,6 +75,6 @@ if F["agents"] and os.environ.get("GOOGLE_API_KEY"):
             out["agents"][job["symbol"]] = {"date": job["date"], "decision": str(dec)[:200], "market": g("market_report"), "sentiment": g("sentiment_report"),
                 "news": g("news_report"), "fundamentals": g("fundamentals_report"), "plan": g("investment_plan"), "trader": g("trader_investment_plan"), "final": g("final_trade_decision")}
         except Exception:
-            traceback.print_exc(); out["agents"][job["symbol"]] = {"date": job["date"], "decision": ""}
+            traceback.print_exc(); out["agents"][job["symbol"]] = {"date": job["date"], "decision": "", "error": traceback.format_exc()[-1500:]}
         push(); out["agents"] = {}
 print("done")
