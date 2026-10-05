@@ -64,13 +64,24 @@ push(); out = {"forecasts": {}, "sentiment": {}, "agents": {}}
 if F["agents"] and os.environ.get("GOOGLE_API_KEY"):
     from tradingagents.graph.trading_graph import TradingAgentsGraph
     from tradingagents.default_config import DEFAULT_CONFIG
-    cfg = DEFAULT_CONFIG.copy()
-    cfg.update({"llm_provider": "google", "deep_think_llm": "gemini-3.5-flash", "quick_think_llm": "gemini-3.5-flash-lite",
-                "max_debate_rounds": 1, "max_risk_discuss_rounds": 1})
+    # Free tier: gemini-3.5-flash allows only 20 requests/day (the site's live judge needs them), so the
+    # committee runs on lite models; quotas are per model, so a 429 retries on the next pair.
+    PAIRS = [("gemini-3.1-flash-lite", "gemini-3.1-flash-lite"), ("gemini-3.5-flash-lite", "gemini-3.5-flash-lite")]
+    def run(sym, date):
+        last = None
+        for deep, quick in PAIRS:
+            c = DEFAULT_CONFIG.copy()
+            c.update({"llm_provider": "google", "deep_think_llm": deep, "quick_think_llm": quick,
+                      "max_debate_rounds": 1, "max_risk_discuss_rounds": 1})
+            try: return TradingAgentsGraph(debug=False, config=c).propagate(sym, date)
+            except Exception as e:
+                last = e
+                if "RESOURCE_EXHAUSTED" not in str(e) and "429" not in str(e): raise
+                print("quota hit on", deep, "- trying next model")
+        raise last
     for job in F["agents"]:
         try:
-            ta = TradingAgentsGraph(debug=False, config=cfg)
-            st, dec = ta.propagate(job["symbol"], job["date"])
+            st, dec = run(job["symbol"], job["date"])
             g = lambda k: str(st.get(k, ""))[:6000] if isinstance(st, dict) else ""
             out["agents"][job["symbol"]] = {"date": job["date"], "decision": str(dec)[:200], "market": g("market_report"), "sentiment": g("sentiment_report"),
                 "news": g("news_report"), "fundamentals": g("fundamentals_report"), "plan": g("investment_plan"), "trader": g("trader_investment_plan"), "final": g("final_trade_decision")}
