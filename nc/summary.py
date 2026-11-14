@@ -4,10 +4,12 @@ R = {}
 for p in glob.glob("art/**/rows.csv", recursive=True):
     m = p.split("/")[1].split("-")[1]; R.setdefault(m, []).append(pd.read_csv(p))
 R = {m: pd.concat(v) for m, v in R.items()}; M = sorted(R); print("models:", M, {m: len(R[m]) for m in M})
+for m in M: print(m, "ts sample", R[m].ts.iloc[:2].tolist(), "rows", len(R[m]), "nan p50", int(R[m].p50_1.isna().sum()))
+K = ["sym", "tf", "last", "a1", "a3"]            # the candles themselves are the key: the jobs ran on different pandas versions, so their ts units differ
 base = None
 for m in M:
-    x = R[m][["sym", "tf", "ts", "last", "atr", "a1", "a3", "p10_1", "p50_1", "p90_1", "p50_3"]].rename(columns={"p10_1": m + "_lo", "p50_1": m, "p90_1": m + "_hi", "p50_3": m + "_3"})
-    base = x if base is None else base.merge(x.drop(columns=["last", "atr", "a1", "a3"]), on=["sym", "tf", "ts"], how="inner")
+    x = R[m].drop_duplicates(K)[K + ["ts", "atr", "p10_1", "p50_1", "p90_1", "p50_3"]].rename(columns={"p10_1": m + "_lo", "p50_1": m, "p90_1": m + "_hi", "p50_3": m + "_3"})
+    base = x if base is None else base.merge(x.drop(columns=["ts", "atr"]), on=K, how="inner")
 d = base.sort_values(["tf", "sym", "ts"]).reset_index(drop=True); d = d[d.a1 != d["last"]].copy()
 d["up"] = (d.a1 > d["last"]).astype(int); d["up3"] = (d.a3 > d["last"]).astype(int)
 d["half"] = d.groupby(["tf", "sym"]).ts.transform(lambda s: (s.rank(pct=True) > 0.5).astype(int))
@@ -51,7 +53,7 @@ for m in M:
         print("| %s | %s | %.1f%% | %.2f | %.1f%% |" % (m, tf, 100 * inside, w, 100 * hl))
 print("\n## Pullback entry test: a limit order 0.5 band-widths toward p10/p90 from the last close, in the majority direction, graded at the next close")
 for tf in sorted(d.tf.unique()):
-    x = d[d.tf == tf].merge(raw[M[0]][["sym", "tf", "ts", "h1", "l1"]], on=["sym", "tf", "ts"]); s = np.sign(x.votes)
+    x = d[d.tf == tf].merge(raw[M[0]].drop_duplicates(K)[K + ["h1", "l1"]], on=K); s = np.sign(x.votes)
     lo = x[[m + "_lo" for m in M if m != "kronos"]].mean(axis=1); hi = x[[m + "_hi" for m in M if m != "kronos"]].mean(axis=1)
     lim = np.where(s > 0, x["last"] - 0.5 * (x["last"] - lo), x["last"] + 0.5 * (hi - x["last"]))
     fill = np.where(s > 0, x.l1 <= lim, x.h1 >= lim) & (s != 0); pnl = np.where(s > 0, x.a1 - lim, lim - x.a1) / x.atr
