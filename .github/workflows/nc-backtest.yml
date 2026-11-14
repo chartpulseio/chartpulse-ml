@@ -2,7 +2,7 @@ name: Next-candle backtest
 on:
   workflow_dispatch:
     inputs:
-      points: { description: "forecasts per symbol", default: "800" }
+      points: { description: "forecasts per symbol", default: "2500" }
 permissions: { contents: read }
 jobs:
   run:
@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: [chronos2, timesfm, moirai2, kronos]
+        model: [chronos2, timesfm, moirai2]
         tf: [5m, 15m, 1h]
     steps:
       - uses: actions/checkout@v4
@@ -34,8 +34,38 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: "rows-${{ matrix.model }}-${{ matrix.tf }}", path: rows.csv }
+  kronos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [kronos]
+        tf: [5m, 15m, 1h]
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install
+        run: |
+          X="--extra-index-url https://download.pytorch.org/whl/cpu"
+          pip install $X torch "numpy<2.3" pandas yfinance
+          case "${{ matrix.model }}" in
+            chronos2) pip install $X "chronos-forecasting>=2.0" ;;
+            timesfm)  pip install $X git+https://github.com/google-research/timesfm.git ;;
+            moirai2)  pip install $X git+https://github.com/SalesforceAIResearch/uni2ts.git ; pip install yfinance ;;
+            kronos)   git clone --depth 1 https://github.com/shiyu-coder/Kronos.git ; pip install $X einops huggingface_hub safetensors tqdm ;;
+          esac
+          pip list 2>/dev/null | grep -i -E "^(torch|numpy|pandas|chronos|timesfm|uni2ts|gluonts|yfinance) "
+      - name: Backtest
+        env: { NC_MODEL: "${{ matrix.model }}", NC_TF: "${{ matrix.tf }}", NC_POINTS: "${{ inputs.points }}", NC_SHARD: "${{ matrix.shard }}/5", KRONOS_DIR: Kronos }
+        run: python nc/backtest.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "rows-${{ matrix.model }}-${{ matrix.tf }}-s${{ matrix.shard }}", path: rows.csv }
   summary:
-    needs: run
+    needs: [run, kronos]
     if: always()
     runs-on: ubuntu-latest
     steps:

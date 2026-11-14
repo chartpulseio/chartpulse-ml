@@ -3,7 +3,9 @@ import glob, sys, numpy as np, pandas as pd
 R = {}
 for p in glob.glob("art/**/rows.csv", recursive=True):
     m = p.split("/")[1].split("-")[1]; R.setdefault(m, []).append(pd.read_csv(p))
-R = {m: pd.concat(v) for m, v in R.items()}; M = sorted(R); print("models:", M, {m: len(R[m]) for m in M})
+import os
+R = {m: pd.concat(v) for m, v in R.items() if m not in os.environ.get("NC_EXCLUDE", "").split(",")}
+M = sorted(R, key=lambda m: (R[m].ts.median() < 1e9, m))      # a model whose ts is in real seconds goes first: its ts orders the rows; print("models:", M, {m: len(R[m]) for m in M})
 for m in M: print(m, "ts sample", R[m].ts.iloc[:2].tolist(), "rows", len(R[m]), "nan p50", int(R[m].p50_1.isna().sum()))
 K = ["sym", "tf", "last", "a1", "a3"]            # the candles themselves are the key: the jobs ran on different pandas versions, so their ts units differ
 base = None

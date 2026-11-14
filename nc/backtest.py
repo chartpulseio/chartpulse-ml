@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__)); import models
 MODEL, TF = os.environ["NC_MODEL"], os.environ["NC_TF"]
 SYMS = os.environ.get("NC_SYMS", "EURUSD=X,GBPUSD=X,USDJPY=X,AUDUSD=X,USDCAD=X,EURJPY=X,GBPJPY=X,BTC-USD,ETH-USD,SOL-USD,XRP-USD,GC=F,CL=F,NQ=F,ES=F").split(",")
 N, CTX, H = int(os.environ.get("NC_POINTS", "800")), int(os.environ.get("NC_CTX", "256")), 3
+if os.environ.get("NC_SHARD"): _i, _n = map(int, os.environ["NC_SHARD"].split("/")); SYMS = SYMS[_i::_n]
 BUDGET = float(os.environ.get("NC_BUDGET_MIN", "150")) * 60; T0 = time.time()
 PERIOD = {"5m": "59d", "15m": "59d", "1h": "720d"}[TF]
 
@@ -17,7 +18,7 @@ for s in SYMS:
             if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             df = df.dropna(subset=["Close"]).iloc[:-1]
             if len(df) >= CTX + 200:
-                D[s] = dict(ts=(df.index.astype("int64") // 10**9).values, o=df["Open"].values.astype(float), h=df["High"].values.astype(float),
+                D[s] = dict(ts=np.asarray((df.index.tz_localize(None) if df.index.tz is None else df.index.tz_convert("UTC").tz_localize(None)).values.astype("datetime64[s]").astype("int64")), o=df["Open"].values.astype(float), h=df["High"].values.astype(float),
                             l=df["Low"].values.astype(float), c=df["Close"].values.astype(float), v=df["Volume"].fillna(0).values.astype(float))
             break
         except Exception as e: print("download", s, a, e); time.sleep(5)
