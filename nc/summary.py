@@ -40,3 +40,20 @@ for tf in sorted(d.tf.unique()):
     for s in sorted(x.sym.unique()):
         y = x[x.sym == s]; a = hr(y, np.sign(d.votes).where(d.votes.abs() == len(M), 0)); print("  %-10s n=%5d hit=%.1f%%" % (s, a[0], a[1]))
 d.to_csv("merged.csv", index=False)
+
+print("\n## Range forecast quality (what the bands are good for)\n| model | tf | next close inside p10-p90 (ideal 80%) | band width / ATR | next candle's low-high stays inside band |\n|---|---|---|---|---|")
+raw = {m: R[m] for m in M}
+for m in M:
+    if m == "kronos": continue
+    for tf in sorted(raw[m].tf.unique()):
+        x = raw[m][raw[m].tf == tf]; inside = ((x.a1 >= x.p10_1) & (x.a1 <= x.p90_1)).mean(); w = ((x.p90_1 - x.p10_1) / x.atr).median()
+        hl = ((x.l1 >= x.p10_1) & (x.h1 <= x.p90_1)).mean()
+        print("| %s | %s | %.1f%% | %.2f | %.1f%% |" % (m, tf, 100 * inside, w, 100 * hl))
+print("\n## Pullback entry test: a limit order 0.5 band-widths toward p10/p90 from the last close, in the majority direction, graded at the next close")
+for tf in sorted(d.tf.unique()):
+    x = d[d.tf == tf].merge(raw[M[0]][["sym", "tf", "ts", "h1", "l1"]], on=["sym", "tf", "ts"]); s = np.sign(x.votes)
+    lo = x[[m + "_lo" for m in M if m != "kronos"]].mean(axis=1); hi = x[[m + "_hi" for m in M if m != "kronos"]].mean(axis=1)
+    lim = np.where(s > 0, x["last"] - 0.5 * (x["last"] - lo), x["last"] + 0.5 * (hi - x["last"]))
+    fill = np.where(s > 0, x.l1 <= lim, x.h1 >= lim) & (s != 0); pnl = np.where(s > 0, x.a1 - lim, lim - x.a1) / x.atr
+    mk = (s != 0); pm = np.where(s > 0, x.a1 - x["last"], x["last"] - x.a1) / x.atr
+    print("  %s: market-order avg %.4f ATR (n=%d) | limit fills %.1f%%, avg when filled %.4f ATR, win %.1f%%" % (tf, pm[mk].mean(), mk.sum(), 100 * fill.sum() / max(mk.sum(), 1), pnl[fill].mean(), 100 * (pnl[fill] > 0).mean()))
