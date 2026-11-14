@@ -1,0 +1,42 @@
+name: Next Candle live
+on:
+  workflow_dispatch:
+    inputs:
+      minutes: { description: "how long to run", default: "330" }
+  schedule: [ { cron: "7 */3 * * *" } ]     # safety net only: each run starts the next one itself
+permissions: { id-token: write, contents: read, actions: write }
+concurrency: { group: nc-live, cancel-in-progress: false }
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with: { path: ~/.cache/huggingface, key: nc-hf-v1 }
+      - uses: actions/cache@v4
+        id: venv
+        with: { path: ~/venv, key: "nc-venv-v1-${{ hashFiles('.github/workflows/nc-live.yml') }}" }
+      - name: Install (one environment per model)
+        if: steps.venv.outputs.cache-hit != 'true'
+        run: |
+          X="--extra-index-url https://download.pytorch.org/whl/cpu"
+          python -m venv ~/venv/chronos2 && ~/venv/chronos2/bin/pip -q install $X torch "numpy<2.3" "chronos-forecasting>=2.0"
+          python -m venv ~/venv/timesfm  && ~/venv/timesfm/bin/pip  -q install $X torch "numpy<2.3" git+https://github.com/google-research/timesfm.git
+          python -m venv ~/venv/moirai2  && ~/venv/moirai2/bin/pip  -q install $X torch pandas git+https://github.com/SalesforceAIResearch/uni2ts.git
+      - name: Run
+        env:
+          CP_URL: https://chartpulse.io/api.php
+          NC_MINUTES: "${{ inputs.minutes || '330' }}"
+          NC_PY_CHRONOS2: /home/runner/venv/chronos2/bin/python
+          NC_PY_TIMESFM: /home/runner/venv/timesfm/bin/python
+          NC_PY_MOIRAI2: /home/runner/venv/moirai2/bin/python
+        run: |
+          pip -q install numpy pandas requests yfinance
+          python nc/live.py
+      - name: Start the next run
+        if: always() && !cancelled()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh api -X POST repos/${{ github.repository }}/actions/workflows/nc-live.yml/dispatches -f ref=main

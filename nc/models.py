@@ -21,7 +21,7 @@ def _timesfm():
     import torch, timesfm
     torch.set_num_threads(os.cpu_count() or 2)
     m = timesfm.TimesFM_2p5_200M_torch.from_pretrained("google/timesfm-2.5-200m-pytorch")
-    m.compile(timesfm.ForecastConfig(max_context=512, max_horizon=16, normalize_inputs=True, use_continuous_quantile_head=True,
+    m.compile(timesfm.ForecastConfig(max_context=512, max_horizon=64, normalize_inputs=True, use_continuous_quantile_head=True,
               force_flip_invariance=True, infer_is_positive=True, fix_quantile_crossing=True))
     def fn(W, H):
         out = np.full((len(W), H, 3), np.nan, dtype=np.float64)
