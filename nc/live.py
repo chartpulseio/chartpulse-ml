@@ -9,12 +9,15 @@ MODELS = [m for m in os.environ.get("NC_MODELS", "chronos2,timesfm,moirai2").spl
 FOREX = "EURUSD=X GBPUSD=X USDJPY=X AUDUSD=X USDCAD=X USDCHF=X NZDUSD=X EURJPY=X GBPJPY=X EURGBP=X AUDJPY=X EURAUD=X".split()
 OTHER = "BTC-USD ETH-USD SOL-USD XRP-USD PAXG-USD".split()
 SYMS = FOREX + OTHER; CTX, H, STEP = 256, 12, 300
+HOST = os.environ.get("NC_HOST", "github")
 RUN_MIN = float(os.environ.get("NC_MINUTES", "330")); T0 = time.time(); FAKE = os.environ.get("NC_FAKE") == "1"
 BT = {"run": "walk-forward backtest, 14 Nov 2026, 5m candles, about 3 days", "forex_all_agree": [54.0, 56.6], "all_agree": [53.7, 54.3],
       "single_model": [51.0, 52.6], "n": 2156, "band_inside": 80}
 
 def headers():
     h = {"User-Agent": "chartpulse-nc-live"}
+    kf = os.environ.get("NC_KEY_FILE")
+    if kf and os.path.exists(kf): h["X-NC-Key"] = open(kf).read().strip(); return h
     u, t = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL"), os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
     if u and t:
         r = requests.get(u + "&audience=chartpulse.io", headers={"Authorization": "bearer " + t}, timeout=30); r.raise_for_status()
@@ -87,6 +90,12 @@ def day_block(W, S, now, D1):
 
 def dec(p): return 3 if p > 50 else (5 if p > 0.5 else 6)
 def main():
+    def vps_alive():
+        """The VPS is the main forecaster. A GitHub run only works while the VPS is silent."""
+        if HOST == "vps" or FAKE: return False
+        try: o = requests.get(URL, params={"r": "nc"}, timeout=20).json(); return o.get("host") == "vps" and (o.get("age") or 9e9) < 420
+        except Exception: return False
+    if vps_alive(): print("VPS forecaster is live; nothing to do"); open("skip", "w").write("1"); return
     S = {"hist": [], "open": [], "rng": [], "days": {}, "models": {}, "zs": [], "dopen": [], "day": [], "day_at": 0}
     try:
         old = requests.get(URL, params={"r": "nc", "full": 1}, timeout=30).json()
@@ -162,12 +171,13 @@ def main():
             for dname in sorted(S["days"])[-days:]:
                 a = S["days"][dname].get(key, [0, 0]); w += a[0]; l += a[1]
             return {"w": w, "l": l, "rate": round(100 * w / (w + l), 1) if w + l >= 20 else None}
-        out = {"at": now, "tf": "5m", "models": MODELS, "rows": rows, "closed": closed,
+        out = {"at": now, "host": HOST, "tf": "5m", "models": MODELS, "rows": rows, "closed": closed,
                "stats": {"rule": {"d1": tot("rule", 1), "d7": tot("rule", 7)}, "agree": {"d7": tot("agree", 7)}, "split": {"d7": tot("split", 7)}, "range": {"d7": tot("range", 7)},
                          "models": {m: {"w": a[0], "l": a[1], "rate": round(100 * a[0] / (a[0] + a[1]), 1) if sum(a) >= 50 else None} for m, a in S["models"].items()}},
                "recent": [h for h in S["hist"] if h["sig"]][-40:][::-1], "bt": BT,
                "day": S["day"], "day_at": S["day_at"], "day_stats": {"dir": tot("d24dir", 14), "range": tot("d24rng", 14)}, "state": {k: v for k, v in S.items() if k != "day"}}
         if FAKE: return out
+        if vps_alive(): print("VPS forecaster took over; stopping"); open("skip", "w").write("1"); return
         try:
             r = requests.post(URL, params={"r": "ncpush"}, headers={**headers(), "Content-Type": "application/json"}, data=json.dumps(out), timeout=60)
             print(datetime.datetime.utcnow().strftime("%H:%M:%S"), "live", len(live), "signals", sum(x["sig"] for x in rows), "open", len(S["open"]), "push", r.status_code, r.text[:120], flush=True)

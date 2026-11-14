@@ -1,0 +1,13 @@
+name: Next Candle key
+on:
+  workflow_dispatch:
+    inputs:
+      hash: { description: "sha256 of the VPS push key (the key itself never comes here)", required: true }
+permissions: { id-token: write, contents: read }
+jobs:
+  set:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          T=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=chartpulse.io" | python3 -c "import sys,json;print(json.load(sys.stdin)['value'])")
+          curl -sS -X POST -H "X-GH-OIDC: $T" -H "Content-Type: application/json" -d '{"hash":"${{ inputs.hash }}"}' "https://chartpulse.io/api.php?r=nckey"

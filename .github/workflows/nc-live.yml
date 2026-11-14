@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       minutes: { description: "how long to run", default: "330" }
-  schedule: [ { cron: "7 */3 * * *" } ]     # safety net only: each run starts the next one itself
+  schedule: [ { cron: "7,37 * * * *" } ]    # safety net: takes over only when the VPS forecaster is silent
 permissions: { id-token: write, contents: read, actions: write }
 concurrency: { group: nc-live, cancel-in-progress: false }
 jobs:
@@ -39,4 +39,4 @@ jobs:
       - name: Start the next run
         if: always() && !cancelled()
         env: { GH_TOKEN: "${{ github.token }}" }
-        run: gh api -X POST repos/${{ github.repository }}/actions/workflows/nc-live.yml/dispatches -f ref=main
+        run: "[ -f skip ] || gh api -X POST repos/${{ github.repository }}/actions/workflows/nc-live.yml/dispatches -f ref=main"
