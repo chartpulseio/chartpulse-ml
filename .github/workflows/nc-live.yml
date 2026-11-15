@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       minutes: { description: "how long to run", default: "330" }
-  schedule: [ { cron: "7,37 * * * *" } ]    # safety net: takes over only when the VPS forecaster is silent
+  schedule: [ { cron: "7 * * * *" } ]       # safety net only: each run starts the next one itself
 permissions: { id-token: write, contents: read, actions: write }
 concurrency: { group: nc-live, cancel-in-progress: false }
 jobs:

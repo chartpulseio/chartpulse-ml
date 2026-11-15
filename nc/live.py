@@ -80,6 +80,9 @@ def day_block(W, S, now, D1):
     for i, s in enumerate(syms):
         ts, c = D1[s][:2]; last = float(c[-1]); t = int(ts[-1]); d = dec(last)
         med = np.mean([P[m][i, :, 1] for m in P], axis=0); lo = np.mean([P[m][i, :, 0] for m in band], axis=0); hi = np.mean([P[m][i, :, 2] for m in band], axis=0)
+        # The band is only checked for the next candle (80% inside). Further out the models' bands came out too narrow live,
+        # so each step is at least the next-candle band grown with the square root of time.
+        kk = np.sqrt(np.arange(1, HD + 1)); lo = np.minimum(lo, med - (med[0] - lo[0]) * kk); hi = np.maximum(hi, med + (hi[0] - med[0]) * kk)
         v = {m: int(np.sign(P[m][i, HD - 1, 1] - last)) for m in P}; tot = sum(v.values()); side = int(np.sign(tot))
         rows.append({"s": s, "mkt": "forex" if s in FOREX else ("gold" if s.startswith("PAXG") else "crypto"), "t": t, "last": round(last, d), "dec": d, "open": int(now - t <= 3 * 3600),
                      "v": v, "up": sum(1 for x in v.values() if x > 0), "n": len(v), "side": side, "agree": int(abs(tot) == len(v) and len(v) >= 3),
@@ -131,7 +134,7 @@ def main():
         for r in S["rng"]:                                   # was the close one hour later inside the forecast range?
             d = D.get(r["s"]); k = np.where(d[0] == r["t"] + H * STEP)[0] if d is not None else []
             if len(k):
-                a = S["days"].setdefault(datetime.datetime.utcfromtimestamp(r["t"]).strftime("%Y-%m-%d"), {}).setdefault("range", [0, 0])
+                a = S["days"].setdefault(datetime.datetime.utcfromtimestamp(r["t"]).strftime("%Y-%m-%d"), {}).setdefault("range2" if r.get("k") == 2 else "range", [0, 0])
                 a[0 if r["lo"] <= float(d[1][k[0]]) <= r["hi"] else 1] += 1
             elif now - r["t"] < 4 * 3600: still.append(r)
         S["rng"] = still
@@ -151,16 +154,18 @@ def main():
                 agree = n >= 3 and abs(tot) == n; side = int(np.sign(tot)); fx = s in FOREX; sig = bool(agree and fx)
                 band = [m for m in ("chronos2", "moirai2") if m in P] or list(P)
                 q = lambda k, j: float(np.mean([P[m][i, k, j] for m in band])) if band else last
+                rt = math.sqrt(H)      # next-hour range: never narrower than the checked next-candle band grown with the square root of time
+                hlo = min(q(H - 1, 0), q(H - 1, 1) - (q(0, 1) - q(0, 0)) * rt); hhi = max(q(H - 1, 2), q(H - 1, 1) + (q(0, 2) - q(0, 1)) * rt)
                 z = abs(float(np.mean([P[m][i, 0, 1] - last for m in P])) / atr) if P else 0.0
                 if agree: S["zs"].append(round(z, 4)); S["zs"] = S["zs"][-600:]
                 strong = bool(agree and len(S["zs"]) >= 100 and z >= float(np.quantile(S["zs"], 0.8)))
                 d = dec(last)
                 rows.append({"s": s, "mkt": "forex" if fx else ("gold" if s.startswith("PAXG") else "crypto"), "bar": bar, "last": round(last, d), "dec": d,
                              "v": v, "up": sum(1 for x in v.values() if x > 0), "n": n, "side": side, "agree": int(agree), "sig": int(sig), "strong": int(strong),
-                             "next": [round(q(0, 0), d), round(q(0, 1), d), round(q(0, 2), d)], "h1": [round(q(H - 1, 0), d), round(q(H - 1, 2), d)]})
+                             "next": [round(q(0, 0), d), round(q(0, 1), d), round(q(0, 2), d)], "h1": [round(hlo, d), round(hhi, d)]})
                 if last_bar.get(s) != bar and n:
                     last_bar[s] = bar; S["open"].append({"s": s, "t": bar, "last": last, "v": v, "side": side, "agree": int(agree), "sig": int(sig)})
-                    S["rng"].append({"s": s, "t": bar, "lo": q(H - 1, 0), "hi": q(H - 1, 2)})
+                    S["rng"].append({"s": s, "t": bar, "lo": hlo, "hi": hhi, "k": 2})
         closed = [s for s in SYMS if s not in live]
         if now - int(S.get("day_at") or 0) >= 3300 or not S["day"]:
             try:
@@ -174,7 +179,7 @@ def main():
                 a = S["days"][dname].get(key, [0, 0]); w += a[0]; l += a[1]
             return {"w": w, "l": l, "rate": round(100 * w / (w + l), 1) if w + l >= 20 else None}
         out = {"at": now, "host": HOST, "tf": "5m", "models": MODELS, "rows": rows, "closed": closed,
-               "stats": {"rule": {"d1": tot("rule", 1), "d7": tot("rule", 7)}, "agree": {"d7": tot("agree", 7)}, "split": {"d7": tot("split", 7)}, "range": {"d7": tot("range", 7)},
+               "stats": {"rule": {"d1": tot("rule", 1), "d7": tot("rule", 7)}, "agree": {"d7": tot("agree", 7)}, "split": {"d7": tot("split", 7)}, "range": {"d7": tot("range2", 7)},
                          "models": {m: {"w": a[0], "l": a[1], "rate": round(100 * a[0] / (a[0] + a[1]), 1) if sum(a) >= 50 else None} for m, a in S["models"].items()}},
                "recent": [h for h in S["hist"] if h["sig"]][-40:][::-1], "bt": BT,
                "day": S["day"], "day_at": S["day_at"], "day_stats": {"dir": tot("d24dir", 14), "range": tot("d24rng", 14)}, "state": {k: v for k, v in S.items() if k != "day"}}
