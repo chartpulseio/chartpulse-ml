@@ -60,7 +60,7 @@ def candles(now, interval="5m", period="5d", step=STEP, syms=None):
 def ens_block(W, now):
     """AI Scan ensemble (owner, 15 Nov 2026): a 10-day forecast from all four models for every symbol on the site.
     The site says which symbols are oldest; one small batch is done per 5-minute cycle and pushed back."""
-    HN = 10; N = int(os.environ.get("NC_ENS_N", "24"))
+    HN = 10; N = int(os.environ.get("NC_ENS_N", "14"))
     feed = requests.get(URL, params={"r": "ensfeed", "n": N}, headers=headers(), timeout=30).json(); syms = [x for x in feed.get("syms", []) if isinstance(x, str)]
     if not syms: return 0
     D = candles(now, "1d", "2y", 0, syms); ok = [x for x in syms if x in D]; rows = {x: {"skip": 1} for x in syms if x not in D}
@@ -69,7 +69,7 @@ def ens_block(W, now):
         XK = [dict(ts=D[x][0][-CTX:].tolist(), c=D[x][1][-CTX:].tolist(), **{k: np.nan_to_num(v[-CTX:]).tolist() for k, v in D[x][2].items()}) for x in ok]
         P = {}
         for w in W:
-            try: P[w.name] = w.ask(XK, HN, 1) if w.name == "kronos" else w.ask(X, HN)
+            try: P[w.name] = w.ask(XK, HN, 3) if w.name == "kronos" else w.ask(X, HN)
             except Exception as e: print("ens model failed", e, flush=True)
         for i, x in enumerate(ok):
             last = float(D[x][1][-1]); d = dec(last); m = {}
