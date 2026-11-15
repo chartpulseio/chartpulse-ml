@@ -1,0 +1,33 @@
+name: Site check
+on:
+  workflow_dispatch:
+    inputs:
+      syms: { description: "symbols, space separated", default: "RELIANCE.NS AAPL BTC-USD" }
+      live: { description: "symbol to run the live committee on (optional)", default: "" }
+permissions: { contents: read }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - env: { SYMS: "${{ inputs.syms }}", LIVE: "${{ inputs.live }}" }
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.parse
+          def get(u, data=None):
+              r = urllib.request.Request(u, data=data, headers={"User-Agent": "Mozilla/5.0 chartpulse-check", "Content-Type": "application/json"})
+              return json.loads(urllib.request.urlopen(r, timeout=120).read())
+          for s in os.environ["SYMS"].split():
+              d = get("https://chartpulse.io/api.php?r=desk&s=" + urllib.parse.quote(s)); e = d.get("ens")
+              print(s, "modules", d.get("modules"))
+              print("  ens", None if not e else {k: e[k] for k in ("n", "up", "down", "agree", "d10", "band", "day1")}, [] if not e else [(m["name"], m["d10"]) for m in e["models"]])
+          if os.environ.get("LIVE"):
+              import time
+              for k in range(8):
+                  j = get("https://chartpulse.io/api.php?r=desklive", json.dumps({"s": os.environ["LIVE"]}).encode())
+                  if j.get("status") != "running": break
+                  time.sleep(8)
+              print("LIVE", {k: j.get(k) for k in ("status", "decision", "confidence", "summary", "action", "trigger", "error", "detail")})
+              print("FORECAST ANALYST:", (j.get("analysts") or {}).get("forecast"))
+              print("ens in report:", bool(j.get("ens")))
+          n = get("https://chartpulse.io/api.php?r=nc"); print("nc age", n.get("age"), "host", n.get("host"), "models", n.get("models"))
+          PY
