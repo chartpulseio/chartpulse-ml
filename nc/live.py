@@ -29,8 +29,8 @@ class Worker:
         self.name = name; py = os.environ.get("NC_PY_" + name.upper(), sys.executable)
         self.p = subprocess.Popen([py, os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker.py"), name], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         print("worker", name, json.loads(self.p.stdout.readline()), flush=True)
-    def ask(self, W, h):
-        self.p.stdin.write(json.dumps({"W": W, "H": h}) + "\n"); self.p.stdin.flush(); r = json.loads(self.p.stdout.readline())
+    def ask(self, W, h, S=None):
+        self.p.stdin.write(json.dumps({"W": W, "H": h, "S": S}) + "\n"); self.p.stdin.flush(); r = json.loads(self.p.stdout.readline())
         if "error" in r: raise RuntimeError(self.name + ": " + r["error"])
         return np.asarray(r["P"], dtype=float)
 class Fake:
@@ -42,20 +42,43 @@ class Fake:
             out.append([[c[-1] + d - 1.28 * sd * math.sqrt(k + 1), c[-1] + d, c[-1] + d + 1.28 * sd * math.sqrt(k + 1)] for k in range(h)])
         return np.asarray(out)
 
-def candles(now, interval="5m", period="5d", step=STEP):
+def candles(now, interval="5m", period="5d", step=STEP, syms=None):
     """Closed candles per symbol: (ts[], close[]). A candle counts as closed once its time is over."""
     import yfinance as yf
-    out = {}
-    try: df = yf.download(SYMS, period=period, interval=interval, auto_adjust=False, progress=False, group_by="ticker", threads=True)
+    out = {}; syms = syms or SYMS
+    try: df = yf.download(syms, period=period, interval=interval, auto_adjust=False, progress=False, group_by="ticker", threads=True)
     except Exception as e: print("download failed", e); return out
-    for s in SYMS:
+    for s in syms:
         try:
-            x = df[s][["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"]); idx = x.index
+            x = (df[s] if len(syms) > 1 or isinstance(df.columns, pd.MultiIndex) else df)[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"]); idx = x.index
             ts = np.asarray((idx.tz_convert("UTC").tz_localize(None) if idx.tz is not None else idx).values.astype("datetime64[s]").astype("int64"))
             c = x["Close"].values.astype(float); ok = ts + step <= now; ts, c = ts[ok], c[ok]
             if len(c) >= CTX: out[s] = (ts, c, {k: x[K].values.astype(float)[ok] for k, K in (("o", "Open"), ("h", "High"), ("l", "Low"), ("v", "Volume"))})
         except Exception: pass
     return out
+
+def ens_block(W, now):
+    """AI Scan ensemble (owner, 15 Nov 2026): a 10-day forecast from all four models for every symbol on the site.
+    The site says which symbols are oldest; one small batch is done per 5-minute cycle and pushed back."""
+    HN = 10; N = int(os.environ.get("NC_ENS_N", "24"))
+    feed = requests.get(URL, params={"r": "ensfeed", "n": N}, headers=headers(), timeout=30).json(); syms = [x for x in feed.get("syms", []) if isinstance(x, str)]
+    if not syms: return 0
+    D = candles(now, "1d", "2y", 0, syms); ok = [x for x in syms if x in D]; rows = {x: {"skip": 1} for x in syms if x not in D}
+    if ok:
+        X = [D[x][1][-CTX:].tolist() for x in ok]
+        XK = [dict(ts=D[x][0][-CTX:].tolist(), c=D[x][1][-CTX:].tolist(), **{k: np.nan_to_num(v[-CTX:]).tolist() for k, v in D[x][2].items()}) for x in ok]
+        P = {}
+        for w in W:
+            try: P[w.name] = w.ask(XK, HN, 1) if w.name == "kronos" else w.ask(X, HN)
+            except Exception as e: print("ens model failed", e, flush=True)
+        for i, x in enumerate(ok):
+            last = float(D[x][1][-1]); d = dec(last); m = {}
+            for name, p in P.items():
+                m[name] = {"p50": [round(float(v), d) for v in p[i, :, 1]]}
+                if name != "kronos": m[name]["p10"] = [round(float(v), d) for v in p[i, :, 0]]; m[name]["p90"] = [round(float(v), d) for v in p[i, :, 2]]
+            rows[x] = {"t": int(D[x][0][-1]), "last": round(last, d), "m": m} if m else {"skip": 1}
+    r = requests.post(URL, params={"r": "enspush"}, headers={**headers(), "Content-Type": "application/json"}, data=json.dumps({"rows": rows}), timeout=60)
+    print("ens", len(ok), "of", len(syms), "left", feed.get("left"), "push", r.status_code, r.text[:80], flush=True); return len(syms)
 
 def day_block(W, S, now, D1):
     """24-hour forecast from 1h candles (owner, 15 Nov 2026): median path and 80% band for the next 24 hours, graded a day later."""
@@ -189,6 +212,9 @@ def main():
             r = requests.post(URL, params={"r": "ncpush"}, headers={**headers(), "Content-Type": "application/json"}, data=json.dumps(out), timeout=60)
             print(datetime.datetime.utcnow().strftime("%H:%M:%S"), "live", len(live), "signals", sum(x["sig"] for x in rows), "open", len(S["open"]), "push", r.status_code, r.text[:120], flush=True)
         except Exception as e: print("push failed", e, flush=True)
+        try:                                   # spare time before the next 5m candle goes to the AI Scan ensemble
+            if (now // STEP + 1) * STEP - time.time() > 170: ens_block(W, now)
+        except Exception as e: print("ens failed", e, flush=True)
         if os.environ.get("NC_ONCE"): break
 
 def fake_candles(now):

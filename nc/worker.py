@@ -8,6 +8,7 @@ fn = models.load(sys.argv[1]); out.write(json.dumps({"ready": sys.argv[1]}) + "\
 for line in sys.stdin:
     try:
         q = json.loads(line); W = [{k: np.asarray(v, dtype=np.int64 if k == "ts" else np.float64) for k, v in c.items()} if isinstance(c, dict) else {"c": np.asarray(c, dtype=np.float64)} for c in q["W"]]
+        models.KRONOS_S = q.get("S")
         P = fn(W, int(q["H"])); out.write(json.dumps({"P": np.nan_to_num(P, nan=0.0).round(8).tolist()}) + "\n")
     except Exception as e:
         import traceback; traceback.print_exc(); out.write(json.dumps({"error": str(e)[:300]}) + "\n")

@@ -65,10 +65,11 @@ def _kronos():
                 dfs.append(pd.DataFrame({"open": w["o"], "high": w["h"], "low": w["l"], "close": w["c"], "volume": w["v"]}).astype("float64"))
                 ts = np.asarray(w["ts"], dtype="int64"); step = int(np.median(np.diff(ts[-50:])))
                 xs.append(pd.Series(pd.to_datetime(ts, unit="s"))); ys.append(pd.Series(pd.to_datetime(ts[-1] + step * np.arange(1, H + 1), unit="s")))
-            res = pred.predict_batch(df_list=dfs, x_timestamp_list=xs, y_timestamp_list=ys, pred_len=H, T=1.0, top_p=0.9, sample_count=S, verbose=False)
+            res = pred.predict_batch(df_list=dfs, x_timestamp_list=xs, y_timestamp_list=ys, pred_len=H, T=1.0, top_p=0.9, sample_count=int(KRONOS_S or S), verbose=False)
             for k, r in enumerate(res): out[i + k, :, 1] = r["close"].values[:H]
         return out
     return fn
 
+KRONOS_S = None   # per-request sample count, set by nc/worker.py
 LOADERS = {"chronos2": _chronos2, "timesfm": _timesfm, "moirai2": _moirai2, "kronos": _kronos}
 def load(name): return LOADERS[name]()
