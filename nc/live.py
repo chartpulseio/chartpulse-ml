@@ -5,14 +5,14 @@ import os, sys, json, time, subprocess, datetime, math, random
 import numpy as np, pandas as pd, requests
 
 URL = os.environ.get("CP_URL", "https://chartpulse.io/api.php")
-MODELS = [m for m in os.environ.get("NC_MODELS", "chronos2,timesfm,moirai2").split(",") if m]
+MODELS = [m for m in os.environ.get("NC_MODELS", "chronos2,timesfm,moirai2,kronos").split(",") if m]
 FOREX = "EURUSD=X GBPUSD=X USDJPY=X AUDUSD=X USDCAD=X USDCHF=X NZDUSD=X EURJPY=X GBPJPY=X EURGBP=X AUDJPY=X EURAUD=X".split()
 OTHER = "BTC-USD ETH-USD SOL-USD XRP-USD PAXG-USD".split()
 SYMS = FOREX + OTHER; CTX, H, STEP = 256, 12, 300
 HOST = os.environ.get("NC_HOST", "github")
 RUN_MIN = float(os.environ.get("NC_MINUTES", "330")); T0 = time.time(); FAKE = os.environ.get("NC_FAKE") == "1"
-BT = {"run": "walk-forward backtest, 14 Nov 2026, 5m candles, about 3 days", "forex_all_agree": [54.0, 56.6], "all_agree": [53.7, 54.3],
-      "single_model": [51.0, 52.6], "n": 2156, "band_inside": 80}
+BT = {"run": "walk-forward backtest, 15 Nov 2026, 4 models, 5m candles, about 9 days", "forex_all_agree": [53.5, 58.4], "all_agree": [53.0, 56.6],
+      "single_model": [50.1, 52.5], "n": 3089, "band_inside": 80}
 
 def headers():
     h = {"User-Agent": "chartpulse-nc-live"}
@@ -38,7 +38,7 @@ class Fake:
     def ask(self, W, h):
         out = []
         for c in W:
-            c = np.asarray(c); sd = np.std(np.diff(c[-50:])) or 1e-9; d = random.choice([-1, 1]) * sd * 0.1
+            c = np.asarray(c["c"] if isinstance(c, dict) else c); sd = np.std(np.diff(c[-50:])) or 1e-9; d = random.choice([-1, 1]) * sd * 0.1
             out.append([[c[-1] + d - 1.28 * sd * math.sqrt(k + 1), c[-1] + d, c[-1] + d + 1.28 * sd * math.sqrt(k + 1)] for k in range(h)])
         return np.asarray(out)
 
@@ -50,10 +50,10 @@ def candles(now, interval="5m", period="5d", step=STEP):
     except Exception as e: print("download failed", e); return out
     for s in SYMS:
         try:
-            x = df[s][["Close"]].dropna(); idx = x.index
+            x = df[s][["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"]); idx = x.index
             ts = np.asarray((idx.tz_convert("UTC").tz_localize(None) if idx.tz is not None else idx).values.astype("datetime64[s]").astype("int64"))
             c = x["Close"].values.astype(float); ok = ts + step <= now; ts, c = ts[ok], c[ok]
-            if len(c) >= CTX: out[s] = (ts, c)
+            if len(c) >= CTX: out[s] = (ts, c, {k: x[K].values.astype(float)[ok] for k, K in (("o", "Open"), ("h", "High"), ("l", "Low"), ("v", "Volume"))})
         except Exception: pass
     return out
 
@@ -72,16 +72,17 @@ def day_block(W, S, now, D1):
     if not syms: return rows
     X = [D1[s][1][-CTX:].tolist() for s in syms]; P = {}
     for w in W:
+        if w.name == "kronos": continue       # Kronos votes on the next 5m candle only
         try: P[w.name] = w.ask(X, HD)
         except Exception as e: print("day model failed", e, flush=True)
     if not P: return rows
     band = [m for m in ("chronos2", "moirai2") if m in P] or list(P)
     for i, s in enumerate(syms):
-        ts, c = D1[s]; last = float(c[-1]); t = int(ts[-1]); d = dec(last)
+        ts, c = D1[s][:2]; last = float(c[-1]); t = int(ts[-1]); d = dec(last)
         med = np.mean([P[m][i, :, 1] for m in P], axis=0); lo = np.mean([P[m][i, :, 0] for m in band], axis=0); hi = np.mean([P[m][i, :, 2] for m in band], axis=0)
         v = {m: int(np.sign(P[m][i, HD - 1, 1] - last)) for m in P}; tot = sum(v.values()); side = int(np.sign(tot))
         rows.append({"s": s, "mkt": "forex" if s in FOREX else ("gold" if s.startswith("PAXG") else "crypto"), "t": t, "last": round(last, d), "dec": d, "open": int(now - t <= 3 * 3600),
-                     "v": v, "up": sum(1 for x in v.values() if x > 0), "n": len(v), "side": side, "agree": int(abs(tot) == len(v) and len(v) == len(MODELS)),
+                     "v": v, "up": sum(1 for x in v.values() if x > 0), "n": len(v), "side": side, "agree": int(abs(tot) == len(v) and len(v) >= 3),
                      "chg": round(100 * (float(med[-1]) / last - 1), 3), "past": [round(float(x), d) for x in c[-48:]],
                      "med": [round(float(x), d) for x in med], "lo": [round(float(x), d) for x in lo], "hi": [round(float(x), d) for x in hi]})
         if now - t <= 3 * 3600 and not any(o["s"] == s and t - o["t"] < 4 * 3600 for o in S["dopen"]):
@@ -140,13 +141,14 @@ def main():
         rows = []
         if live:
             X = [D[s][1][-CTX:].tolist() for s in live]; P = {}
+            XK = [dict(ts=D[s][0][-CTX:].tolist(), c=D[s][1][-CTX:].tolist(), **{k: np.nan_to_num(v[-CTX:]).tolist() for k, v in D[s][2].items()}) for s in live]
             for w in W:
-                try: P[w.name] = w.ask(X, H)
+                try: P[w.name] = w.ask(XK, 1) if w.name == "kronos" else w.ask(X, H)
                 except Exception as e: print("model failed", e, flush=True)
             for i, s in enumerate(live):
-                ts, c = D[s]; last = float(c[-1]); bar = int(ts[-1]); atr = float(np.mean(np.abs(np.diff(c[-15:])))) or 1e-12
+                ts, c = D[s][:2]; last = float(c[-1]); bar = int(ts[-1]); atr = float(np.mean(np.abs(np.diff(c[-15:])))) or 1e-12
                 v = {m: int(np.sign(P[m][i, 0, 1] - last)) for m in P}; tot = sum(v.values()); n = len(v)
-                agree = n == len(MODELS) and abs(tot) == n; side = int(np.sign(tot)); fx = s in FOREX; sig = bool(agree and fx)
+                agree = n >= 3 and abs(tot) == n; side = int(np.sign(tot)); fx = s in FOREX; sig = bool(agree and fx)
                 band = [m for m in ("chronos2", "moirai2") if m in P] or list(P)
                 q = lambda k, j: float(np.mean([P[m][i, k, j] for m in band])) if band else last
                 z = abs(float(np.mean([P[m][i, 0, 1] - last for m in P])) / atr) if P else 0.0
@@ -186,7 +188,8 @@ def main():
 
 def fake_candles(now):
     rng = np.random.default_rng(1); out = {}; t = (now // STEP) * STEP - STEP * np.arange(400)[::-1] - STEP
-    for s in SYMS: out[s] = (t, 1.1 + np.cumsum(rng.normal(0, 0.0003, 400)))
+    for s in SYMS:
+        c = 1.1 + np.cumsum(rng.normal(0, 0.0003, 400)); out[s] = (t, c, {"o": c, "h": c, "l": c, "v": c * 0})
     return out
 if __name__ == "__main__":
     r = main()

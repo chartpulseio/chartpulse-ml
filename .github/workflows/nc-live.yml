@@ -18,13 +18,14 @@ jobs:
         with: { path: ~/.cache/huggingface, key: nc-hf-v1 }
       - uses: actions/cache@v4
         id: venv
-        with: { path: ~/venv, key: "nc-venv-v1-${{ hashFiles('.github/workflows/nc-live.yml') }}" }
+        with: { path: ~/venv, key: "nc-venv-v2-${{ hashFiles('.github/workflows/nc-live.yml') }}" }
       - name: Install (one environment per model)
         if: steps.venv.outputs.cache-hit != 'true'
         run: |
           X="--extra-index-url https://download.pytorch.org/whl/cpu"
           python -m venv ~/venv/chronos2 && ~/venv/chronos2/bin/pip -q install $X torch "numpy<2.3" "chronos-forecasting>=2.0"
           python -m venv ~/venv/timesfm  && ~/venv/timesfm/bin/pip  -q install $X torch "numpy<2.3" git+https://github.com/google-research/timesfm.git
+          python -m venv ~/venv/kronos && ~/venv/kronos/bin/pip -q install $X torch "numpy<2.3" pandas einops huggingface_hub safetensors tqdm && git clone -q --depth 1 https://github.com/shiyu-coder/Kronos.git ~/venv/kronos/Kronos
           python -m venv ~/venv/moirai2  && ~/venv/moirai2/bin/pip  -q install $X torch pandas git+https://github.com/SalesforceAIResearch/uni2ts.git
       - name: Run
         env:
@@ -33,6 +34,8 @@ jobs:
           NC_PY_CHRONOS2: /home/runner/venv/chronos2/bin/python
           NC_PY_TIMESFM: /home/runner/venv/timesfm/bin/python
           NC_PY_MOIRAI2: /home/runner/venv/moirai2/bin/python
+          NC_PY_KRONOS: /home/runner/venv/kronos/bin/python
+          KRONOS_DIR: /home/runner/venv/kronos/Kronos
         run: |
           pip -q install numpy pandas requests yfinance
           python nc/live.py
