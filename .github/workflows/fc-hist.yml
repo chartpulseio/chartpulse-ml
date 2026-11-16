@@ -1,0 +1,31 @@
+name: Forecast history for AI Backtesting
+on:
+  workflow_dispatch:
+  schedule: [{ cron: "23 3 * * 0" }]
+permissions: { id-token: write, contents: read }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [chronos2, timesfm, moirai2, kronos]
+        sym: ["^NSEI", "^NSEBANK", "BTC-USD", "GC=F", "EURUSD=X"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install
+        run: |
+          X="--extra-index-url https://download.pytorch.org/whl/cpu"
+          pip install $X torch "numpy<2.3" pandas yfinance
+          case "${{ matrix.model }}" in
+            chronos2) pip install $X "chronos-forecasting>=2.0" ;;
+            timesfm)  pip install $X git+https://github.com/google-research/timesfm.git ;;
+            moirai2)  pip install $X git+https://github.com/SalesforceAIResearch/uni2ts.git ; pip install yfinance ;;
+            kronos)   git clone --depth 1 https://github.com/shiyu-coder/Kronos.git ; pip install $X einops huggingface_hub safetensors tqdm ;;
+          esac
+      - name: Forecast history
+        env: { FC_MODEL: "${{ matrix.model }}", FC_SYMS: "${{ matrix.sym }}", KRONOS_DIR: Kronos, NC_KRONOS_SAMPLES: "1" }
+        run: python fc/hist.py
