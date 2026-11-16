@@ -28,7 +28,7 @@ def get_json(u):
     with urllib.request.urlopen(req, timeout=20, context=ssl.create_default_context()) as r: return json.loads(r.read())
 
 async def binance():
-    u = "wss://fstream.binance.com/ws/!forceOrder@arr"
+    u = "wss://fstream.binance.com/market/ws/!forceOrder@arr"   # forceOrder is a /market stream since the 2026 split
     while True:
         try:
             async with websockets.connect(u, ping_interval=60, ping_timeout=60, max_size=2**20) as ws:
@@ -113,13 +113,13 @@ async def okx():
                 finally: pt.cancel()
         except Exception as e: log("okx", repr(e)[:200]); await asyncio.sleep(5)
 
-def summary():
+def summary(evs=None):
     now = time.time()
-    while EV and EV[0][0] < now - DAY: EV.popleft()
+    snap = [e for e in (evs if evs is not None else list(EV)) if e[0] >= now - DAY]
     tot = {k: {"long": 0.0, "short": 0.0, "n": 0} for k in ("m5", "h1", "h4", "h24")}; win = {"m5": 300, "h1": 3600, "h4": 14400, "h24": DAY}
     ex = {e: {"long": 0.0, "short": 0.0, "n": 0} for e in SEEN}
     coins = {}; hours = collections.defaultdict(lambda: [0.0, 0.0]); m5 = collections.defaultdict(lambda: [0.0, 0.0])
-    for ts, e, c, sd, px, usd in EV:
+    for ts, e, c, sd, px, usd in snap:
         age = now - ts; j = 0 if sd == "long" else 1
         for k, w in win.items():
             if age <= w: tot[k][sd] += usd; tot[k]["n"] += 1
@@ -133,15 +133,15 @@ def summary():
     rd = lambda v: round(v)
     top = sorted(coins.values(), key=lambda r: -(r["h24"][0] + r["h24"][1]))[:120]
     for r in top: r["h1"] = list(map(rd, r["h1"])); r["h4"] = list(map(rd, r["h4"])); r["h24"] = list(map(rd, r["h24"])); r["max"] = rd(r["max"])
-    big = [e for e in EV if e[5] >= 20000][-80:][::-1]
-    largest = sorted(EV, key=lambda e: -e[5])[:12]
+    big = [e for e in snap if e[5] >= 20000][-80:][::-1]
+    largest = sorted(snap, key=lambda e: -e[5])[:12]
     ev = lambda e: {"t": e[0], "ex": e[1], "c": e[2], "side": e[3], "px": e[4], "v": rd(e[5])}
     alerts = []
-    for e in EV:
+    for e in snap:
         if e[5] >= 1_500_000 and now - e[0] < 900:
             k = (e[0], e[1], e[2], round(e[5]))
             if k not in SENT_ALERT: SENT_ALERT.add(k); alerts.append(ev(e))
-    return {"at": int(now), "since": int(EV[0][0]) if EV else int(now), "up": int(now - START),
+    return {"at": int(now), "since": int(snap[0][0]) if snap else int(now), "up": int(now - START),
             "tot": {k: {"long": rd(v["long"]), "short": rd(v["short"]), "n": v["n"]} for k, v in tot.items()},
             "ex": {k: {"long": rd(v["long"]), "short": rd(v["short"]), "n": v["n"], "age": int(now - SEEN[k]) if SEEN[k] else None} for k, v in ex.items()},
             "hours": [[t, rd(a), rd(b)] for t, (a, b) in sorted(hours.items())][-25:], "m5": [[t, rd(a), rd(b)] for t, (a, b) in sorted(m5.items())],
@@ -157,7 +157,9 @@ async def pusher():
     while True:
         await asyncio.sleep(15)
         try:
-            p = await asyncio.to_thread(summary)
+            cut = time.time() - DAY
+            while EV and EV[0][0] < cut: EV.popleft()
+            p = await asyncio.to_thread(summary, list(EV))
             st, body = await asyncio.to_thread(push, p)
             if p["alerts"] or int(time.time()) % 300 < 15: log("push", st, body, "events", len(EV), {k: round(v["long"] + v["short"]) for k, v in p["tot"].items()})
         except Exception as e: log("push failed", repr(e)[:200])
