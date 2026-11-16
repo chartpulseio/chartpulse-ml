@@ -13,6 +13,7 @@ DAY = 86400
 EV = collections.deque()            # (ts, ex, coin, side, px, usd)
 SEEN = {"Binance": 0, "Bybit": 0, "OKX": 0}
 SENT_ALERT = set(); START = time.time()
+ERR = {}; MODE = {"Binance": "direct"}
 
 def coin_of(sym):
     s = re.sub(r"(-USDT-SWAP|USDT|-USDT)$", "", sym.upper())
@@ -36,7 +37,36 @@ async def binance():
                     o = json.loads(m).get("o") or {}
                     px = float(o.get("ap") or 0) or float(o.get("p") or 0); q = float(o.get("z") or o.get("q") or 0)
                     if str(o.get("s", "")).endswith("USDT"): add(int(o.get("T", time.time() * 1000)) / 1000, "Binance", o["s"], "long" if o.get("S") == "SELL" else "short", px, px * q)
-        except Exception as e: log("binance", repr(e)[:200]); await asyncio.sleep(5)
+        except Exception as e:
+            log("binance", repr(e)[:200]); ERR["Binance"] = repr(e)[:160]
+            if any(x in repr(e) for x in ("451", "403", "InvalidStatus", "InvalidHandshake", "rejected")):
+                MODE["Binance"] = "relay"; await binance_relay(); return
+            await asyncio.sleep(5)
+
+def relay_call():
+    u = URL.replace("r=liqpush", "r=liqbn") + "&s=50"
+    req = urllib.request.Request(u, headers={"X-NC-Key": KEY, "User-Agent": "chartpulse-liq"})
+    with urllib.request.urlopen(req, timeout=80, context=ssl.create_default_context()) as r: return json.loads(r.read())
+
+async def binance_relay():
+    """Binance refuses this server's region: chartpulse.io listens for 50 s at a time and hands the events back.
+    Two calls overlap so there is no gap between windows."""
+    log("binance via site relay"); dup = {}
+    async def loop(delay):
+        await asyncio.sleep(delay)
+        while True:
+            try:
+                j = await asyncio.to_thread(relay_call)
+                if j.get("error"): ERR["Binance"] = "relay: " + str(j["error"])[:150]; await asyncio.sleep(10); continue
+                ERR.pop("Binance", None)
+                now = time.time()
+                for t, sym, side, px, usd in j.get("ev") or []:
+                    k = (t, sym, side, usd)
+                    if k in dup: continue
+                    dup[k] = now; add(t, "Binance", sym, side, px, usd)
+                for k in [k for k, v in dup.items() if v < now - 300]: del dup[k]
+            except Exception as e: ERR["Binance"] = "relay: " + repr(e)[:150]; await asyncio.sleep(10)
+    await asyncio.gather(loop(0), loop(25))
 
 async def bybit():
     u = "wss://stream.bybit.com/v5/public/linear"
@@ -115,7 +145,7 @@ def summary():
             "tot": {k: {"long": rd(v["long"]), "short": rd(v["short"]), "n": v["n"]} for k, v in tot.items()},
             "ex": {k: {"long": rd(v["long"]), "short": rd(v["short"]), "n": v["n"], "age": int(now - SEEN[k]) if SEEN[k] else None} for k, v in ex.items()},
             "hours": [[t, rd(a), rd(b)] for t, (a, b) in sorted(hours.items())][-25:], "m5": [[t, rd(a), rd(b)] for t, (a, b) in sorted(m5.items())],
-            "coins": top, "big": [ev(e) for e in big], "largest": [ev(e) for e in largest], "alerts": alerts}
+            "err": ERR, "mode": MODE, "coins": top, "big": [ev(e) for e in big], "largest": [ev(e) for e in largest], "alerts": alerts}
 
 def push(p):
     data = json.dumps(p, separators=(",", ":")).encode()
